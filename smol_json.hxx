@@ -87,12 +87,25 @@ Classes:
 #define SMOL_JSON_LOG_FN(msg, ...) printf("[smol_json] " msg, __VA_ARGS__)
 #endif
 
+// You probably want to define this to std::string_view to avoid using this fallback
+//
+// #include <string_view>
+// #define SMOL_JSON_STRING_VIEW std::string_view
+// #include <smol_json.hxx>
+//
 #ifndef SMOL_JSON_STRING_VIEW
+
+#ifdef _MSC_VER
+#pragma message ( "Warning: Using fallback string_view implementation; you probably want to define SMOL_JSON_STRING_VIEW to std::string_view before including this header!" )
+#else
+#warning Using fallback string_view implementation; you probably want to define SMOL_JSON_STRING_VIEW to std::string_view before including this header!
+#endif
 
 namespace smol_json {
 
 struct string_view
 {
+    string_view() {}
 	string_view(const char* s, uint32_t l)
 		: str(s), len(l)
 	{}
@@ -102,6 +115,9 @@ struct string_view
 
 	inline const char* data() const { return str; }
 	inline uint32_t length() const { return len; }
+
+    const char* begin() const { return str; }
+    const char* end() const { return str + len; }
 	
 	template<typename T>
 	bool operator==(const T& rhs) const
@@ -151,6 +167,10 @@ inline bool doFail(const char* at)
 }
 #endif
 
+#ifndef SMOL_JSON_TERMCHAR
+#define SMOL_JSON_TERMCHAR static_cast<char>('\xff')
+#endif
+
 namespace smol_json {
 
 // TStringView must implement data() and length() and be copyable
@@ -180,7 +200,7 @@ struct Stream
 	inline char get()
 	{
 		if (isEof(0))
-			return 0xff;
+			return SMOL_JSON_TERMCHAR;
 		
 		const char c = *cursor;
 		safeInc(1);
@@ -191,14 +211,14 @@ struct Stream
 	
 	inline char peek(int ofs=1)
 	{
-		if (isEof(ofs)) return 0xff;
+		if (isEof(ofs)) return SMOL_JSON_TERMCHAR;
 
 		return *(cursor + ofs);
 	}
 
 private:
-	const char* cursor;
 	SMOL_JSON_STRING_VIEW base;
+	const char* cursor;
 };
 
 
@@ -273,12 +293,12 @@ public:
 	inline char skipWs() noexcept
 	{
 		if (isEof(0))
-			return 0xff;
+			return SMOL_JSON_TERMCHAR;
 		
 		char first = get();
 		for (; isWhiteSpace(first); first = get())
 			if (isEof(0))
-				return 0xff;
+				return SMOL_JSON_TERMCHAR;
 
 		return first;
 	}
@@ -287,7 +307,7 @@ public:
 	inline bool expectSimple() noexcept
 	{
 		char first = skipWs();
-		if (first == 0xff)
+		if (first == SMOL_JSON_TERMCHAR)
 			return false;
 
 		if (first == c)
@@ -347,11 +367,11 @@ public:
 		tok->t = TokenType::String;
 		const char* begin = getPtr();
 
-		for (char c = get(); c != 0xff; c = get())
+		for (char c = get(); c != SMOL_JSON_TERMCHAR; c = get())
 		{
 			if (c == '\"')
 			{
-				tok->string = { begin, u32(getPtr() - begin - 1) };
+				tok->string = { begin, uint32_t(getPtr() - begin - 1) };
 				return true;
 			}
 		}
@@ -395,7 +415,7 @@ public:
 	inline bool expectComplex(T f)
 	{
 		char first = skipWs();
-		if (first == 0xff)
+		if (first == SMOL_JSON_TERMCHAR)
 			return false;
 		return f(first);
 	}
@@ -413,7 +433,7 @@ public:
 		struct OptSeekBack
 		{
 			OptSeekBack(Stream& s, bool d)
-				: backup(src), src(s), doIt(d)
+				: doIt(d), src(s), backup(src)
 			{}
 			~OptSeekBack()
 			{
@@ -428,7 +448,7 @@ public:
 
 		char first = skipWs();
 
-		SW_ENSURE(first != 0xff);
+		SW_ENSURE(first != SMOL_JSON_TERMCHAR);
 
 		switch (first)
 		{
@@ -485,7 +505,6 @@ struct Parser : public Lexer
 		: Lexer(s)
 	{}
 
-	// Formerly JSONStringKeyIter
 	template<typename T>
 	bool stringKeyIter(T f)
 	{
